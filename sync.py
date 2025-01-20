@@ -193,7 +193,8 @@ def open_serial_monitor(port, baud_rate, local_dir):
             ser.write(b"banner\n")
             time.sleep(0.1)  # Give the Teensy time to respond
             # download_directory(ser, "/Iterations", local_dir)
-
+            sync_directory(ser, local_dir, DEFAULT_REMOTE_DIR)
+            
             while True:
                 if ser.in_waiting:
                     print(
@@ -207,7 +208,7 @@ def open_serial_monitor(port, baud_rate, local_dir):
                         break
                     elif cmd.lower() == "resync":
                         print("Resyncing files...")
-                        # sync_directory(ser, local_dir, DEFAULT_REMOTE_DIR)
+                        sync_directory(ser, local_dir, DEFAULT_REMOTE_DIR)
                     else:
                         ser.write((cmd + "\n").encode())
     except KeyboardInterrupt:
@@ -235,12 +236,15 @@ if __name__ == "__main__":
     try:
         with serial.Serial(port, 2000000, timeout=1) as ser:
             if wait_for_teensy_ready(ser):
-                # First download the Iterations directory
-                target_path = "/Iterations/Iteration_[0.73_37_2_60_15_8_8_1048575]/"
-                print(f"\nDownloading {target_path}...")
-                if not download_directory(ser, target_path, local_dir):
-                    print("Error: Download failed")
-                    sys.exit(1)
+
+                sync_directory(ser, local_dir, DEFAULT_REMOTE_DIR)
+                
+                # # First download the Iterations directory
+                # target_path = "/Iterations/Iteration_[0.73_37_2_60_15_8_8_1048575]/"
+                # print(f"\nDownloading {target_path}...")
+                # if not download_directory(ser, target_path, local_dir):
+                #     print("Error: Download failed")
+                #     sys.exit(1)
             else:
                 print("Error: Teensy did not respond as expected.")
                 sys.exit(1)
