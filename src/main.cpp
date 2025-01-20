@@ -96,6 +96,33 @@ Error removeFile(const String& path) {
     return SD.remove(path.c_str()) ? Error::NONE : Error::REMOVE_FAILED;
 }
 
+
+
+unsigned long countFilesRecursive(File dir) {
+    unsigned long count = 0;
+    File entry = dir.openNextFile();
+    
+    while (entry) {
+        if (entry.isDirectory()) {
+            count += countFilesRecursive(entry);
+        } else {
+            count++;
+        }
+        entry.close();
+        entry = dir.openNextFile();
+    }
+    
+    return count;
+}
+
+// Add this helper function to get relative path
+String getRelativePath(const String& basePath, const String& fullPath) {
+    if (fullPath.startsWith(basePath)) {
+        return fullPath.substring(basePath.length());
+    }
+    return fullPath;
+}
+
 Error removeDirectory(const String& path) {
     File dir = SD.open(path.c_str());
     if (!dir) return Error::FILE_NOT_FOUND;
@@ -144,6 +171,64 @@ Error printFile(const String& path) {
     file.close();
     return Error::NONE;
 }
+Error sendDirectory(const String& path) {
+    File dir = SD.open(path.c_str());
+    if (!dir || !dir.isDirectory()) return Error::NOT_A_DIRECTORY;
+
+    // First, count all files recursively
+    unsigned long fileCount = countFilesRecursive(dir);
+    dir.close();
+
+    // Send total file count
+    SerialUSB.println(String("DIR_COUNT:") + fileCount);
+    
+    // If no files found, end early
+    if (fileCount == 0) {
+        SerialUSB.println("DIR_DONE");
+        return Error::NONE;
+    }
+
+    // Reopen directory for sending files
+    dir = SD.open(path.c_str());
+    
+    // Helper function to process directory recursively
+    std::function<void(File&, const String&)> processDirectory = [&](File& dir, const String& currentPath) {
+        File entry = dir.openNextFile();
+        while (entry) {
+            String entryPath = currentPath + "/" + entry.name();
+            
+            if (entry.isDirectory()) {
+                processDirectory(entry, entryPath);
+            } else {
+                // Send file info with full relative path
+                SerialUSB.println(String("FILE:") + entryPath);
+                SerialUSB.println(entry.size());
+                
+                // Send file contents
+                uint32_t remaining = entry.size();
+                while (remaining > 0) {
+                    uint32_t chunk = min(512UL, remaining);
+                    uint8_t buffer[512];
+                    entry.read(buffer, chunk);
+                    SerialUSB.write(buffer, chunk);
+                    remaining -= chunk;
+                }
+                SerialUSB.println("FILE_DONE");
+            }
+            entry.close();
+            entry = dir.openNextFile();
+        }
+    };
+
+    // Start recursive processing from root
+    processDirectory(dir, "");
+    
+    dir.close();
+    SerialUSB.println("DIR_DONE");
+    return Error::NONE;
+}
+
+
 
 void showFreeSpace() {
     File root = SD.open("/");
@@ -387,6 +472,8 @@ Error clearFolder(const String& path) {
     return Error::NONE;
 }
 
+
+
 void processCommand(const String& cmd) {
     if (cmd == "banner") { showBanner(); showHelp(); }
     else if (cmd == "ls") {
@@ -407,6 +494,15 @@ void processCommand(const String& cmd) {
         else if (err == Error::IS_DIRECTORY) SerialUSB.println("Error: Is a directory, use rmdir instead");
         else if (err == Error::REMOVE_FAILED) SerialUSB.println("Error: Failed to remove file");
         else if (err == Error::NONE) SerialUSB.println("File removed successfully");
+    }
+       else if (cmd.startsWith("downloaddir ")) {
+        String path = cmd.substring(11);
+        path.trim();
+        if (!path.startsWith("/")) path = currentPath + path;
+        Error err = sendDirectory(path);
+        if (err != Error::NONE) {
+            SerialUSB.println("Error: Failed to send directory");
+        }
     }
     else if (cmd.startsWith("rmdir ")) {
         String path = cmd.substring(6);

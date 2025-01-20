@@ -10,6 +10,89 @@ DEFAULT_SYNC_DIR = "sync_dir"
 DEFAULT_REMOTE_DIR = "/SYNC"
 
 
+# + uf50-91/
+# + 3-SAT_20Var_87Cls_Seed/
+# + 3-SAT_25Var_109Cls_Seed/
+# + 3-SAT_30Var_131Cls_Seed/
+# + 3-SAT_35Var_153Cls_Seed/
+# + 3-SAT_40Var_174Cls_Seed/
+# + 3-SAT_45Var_196Cls_Seed/
+# + 3-SAT_50Var_218Cls_Seed/
+
+# > 
+def download_directory(ser, remote_path, local_base_path):
+    """
+    Download a directory from the Teensy to the local computer.
+    Uses same approach as the working sync code.
+    """
+    # Clear any pending data
+    if ser.in_waiting:
+        ser.read(ser.in_waiting)
+    
+    print(f"Starting download from {remote_path}...")
+    ser.write(f"downloaddir {remote_path}\n".encode())
+    time.sleep(0.1)  # Give Teensy time to process
+    
+    # Read the initial count
+    response = ser.readline().decode(errors='ignore').strip()
+    if not response.startswith("DIR_COUNT:"):
+        print(f"Error: Unexpected response: {response}")
+        return False
+    
+    total_files = int(response.split(":")[1])
+    print(f"Found {total_files} files to download")
+    
+    if total_files == 0:
+        print("No files found to download")
+        return True
+    
+    files_received = 0
+    while True:
+        response = ser.readline().decode(errors='ignore').strip()
+        
+        if response == "DIR_DONE":
+            break
+            
+        if response.startswith("FILE:"):
+            # Get filename and expected size
+            filename = response[5:]  # Remove FILE: prefix
+            size = int(ser.readline().decode().strip())
+            
+            # Create full local path
+            local_path = os.path.join(local_base_path, filename.lstrip('/'))
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            
+            print(f"Receiving: {filename} ({formatSize(size)})")
+            
+            # Read file data in chunks
+            with open(local_path, 'wb') as f:
+                remaining = size
+                while remaining > 0:
+                    chunk_size = min(512, remaining)
+                    chunk = ser.read(chunk_size)
+                    if not chunk:
+                        print(f"Error: Connection lost while receiving {filename}")
+                        return False
+                    f.write(chunk)
+                    remaining -= len(chunk)
+            
+            # Read FILE_DONE marker
+            ser.readline()
+            
+            files_received += 1
+            print(f"Progress: {files_received}/{total_files} files ({int(files_received/total_files*100)}%)")
+            
+    print(f"\nDownload complete. Received {files_received} files.")
+    return True
+
+
+def formatSize(bytes):
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if bytes < 1024:
+            return f"{bytes:.1f} {unit}"
+        bytes /= 1024
+    return f"{bytes:.1f} TB"
+
 def find_teensy_port():
     if sys.platform.startswith("darwin"):
         ports = glob.glob("/dev/cu.usbmodem*")
@@ -109,6 +192,7 @@ def open_serial_monitor(port, baud_rate, local_dir):
 
             ser.write(b"banner\n")
             time.sleep(0.1)  # Give the Teensy time to respond
+            # download_directory(ser, "/Iterations", local_dir)
 
             while True:
                 if ser.in_waiting:
@@ -123,14 +207,13 @@ def open_serial_monitor(port, baud_rate, local_dir):
                         break
                     elif cmd.lower() == "resync":
                         print("Resyncing files...")
-                        sync_directory(ser, local_dir, DEFAULT_REMOTE_DIR)
+                        # sync_directory(ser, local_dir, DEFAULT_REMOTE_DIR)
                     else:
                         ser.write((cmd + "\n").encode())
     except KeyboardInterrupt:
         print("\nSerial monitor closed")
     except serial.SerialException as e:
         print(f"Error: Unable to open serial port: {e}")
-
 
 if __name__ == "__main__":
     port = find_teensy_port()
@@ -146,14 +229,18 @@ if __name__ == "__main__":
         print(f"Created sync directory: {local_dir}")
 
     print(f"Connecting to Teensy on {port}...")
-
+    # + 3-SAT_40Var_174Cls_Seed/
+    # + 3-SAT_45Var_196Cls_Seed/
+    # + 3-SAT_50Var_218Cls_Seed/
     try:
         with serial.Serial(port, 2000000, timeout=1) as ser:
             if wait_for_teensy_ready(ser):
-                print(
-                    f"Syncing files from {local_dir} to {DEFAULT_REMOTE_DIR} on Teensy..."
-                )
-                sync_directory(ser, local_dir, DEFAULT_REMOTE_DIR)
+                # First download the Iterations directory
+                target_path = "/Iterations/Iteration_[0.73_37_2_60_15_8_8_1048575]/"
+                print(f"\nDownloading {target_path}...")
+                if not download_directory(ser, target_path, local_dir):
+                    print("Error: Download failed")
+                    sys.exit(1)
             else:
                 print("Error: Teensy did not respond as expected.")
                 sys.exit(1)
